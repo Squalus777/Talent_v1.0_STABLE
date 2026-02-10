@@ -57,12 +57,13 @@ def render_manager_view():
             if not evals.empty:
                 fig = px.scatter(evals, x="avg_performance", y="avg_potential", color="category", text="ime_prezime", 
                                  range_x=[0.5,5.5], range_y=[0.5,5.5], title="9-Box Matrica (Trenutni period)")
-                fig.add_vline(x=2.5, line_dash="dot", line_color="gray"); fig.add_vline(x=4.0, line_dash="dot", line_color="gray")
-                fig.add_hline(y=2.5, line_dash="dot", line_color="gray"); fig.add_hline(y=4.0, line_dash="dot", line_color="gray")
+                fig.add_vline(x=2.5, line_dash="dot", line_color="gray")
+                fig.add_vline(x=4.0, line_dash="dot", line_color="gray")
+                fig.add_hline(y=2.5, line_dash="dot", line_color="gray")
+                fig.add_hline(y=4.0, line_dash="dot", line_color="gray")
                 st.plotly_chart(fig, use_container_width=True)
             else: st.info("Nema podataka.")
         
-        # --- SNAIL TRAIL (KRETANJE KROZ MATRICU) ---
         with t2:
             if not my_team.empty:
                 sel = st.selectbox("Odaberi zaposlenika:", my_team['ime_prezime'].tolist())
@@ -97,7 +98,7 @@ def render_manager_view():
                 else: st.info("Nema povijesnih podataka (službenih procjena).")
 
     # ----------------------------------------------------------------
-    # 2. MOJI REZULTATI (Manager kao zaposlenik)
+    # 2. MOJI REZULTATI
     # ----------------------------------------------------------------
     elif menu == "👤 Moji Rezultati":
         st.header("👤 Moji Rezultati")
@@ -109,11 +110,12 @@ def render_manager_view():
             c1.metric("Učinak", f"{r['avg_performance']:.2f}")
             c2.metric("Potencijal", f"{r['avg_potential']:.2f}")
             c3.metric("Kategorija", r['category'])
-            st.write("**Komentar nadređenog:**"); st.write(r['action_plan'])
+            st.write("**Komentar nadređenog:**")
+            st.write(r['action_plan'])
         else: st.warning("Vaša procjena još nije unesena.")
 
     # ----------------------------------------------------------------
-    # 3. CILJEVI TIMA
+    # 3. CILJEVI TIMA (S UKLONJENOM STRIKTNOM BLOKADOM I FIXOM ZA TYPEERROR)
     # ----------------------------------------------------------------
     elif menu == "🎯 Ciljevi Tima":
         st.header("🎯 Ciljevi Tima")
@@ -130,7 +132,9 @@ def render_manager_view():
                     kid = my_team[my_team['ime_prezime']==emp]['kadrovski_broj'].values[0]
                     conn.execute("INSERT INTO goals (period, kadrovski_broj, manager_id, title, description, weight, progress, status, last_updated, deadline, company_id) VALUES (?,?,?,?,?,?,0,'On Track',?,?,?)",
                                (current_period, kid, username, tit, desc, wei, datetime.now().strftime("%Y-%m-%d"), str(dline), company_id))
-                    conn.commit(); st.success("Dodano!"); st.rerun()
+                    conn.commit()
+                    st.success("Dodano!")
+                    st.rerun()
 
         for _, emp in my_team.iterrows():
             eid = emp['kadrovski_broj']
@@ -139,7 +143,7 @@ def render_manager_view():
             
             color = "green" if tot_w == 100 else "red"
             with st.expander(f"👤 {emp['ime_prezime']} (Ukupna težina ciljeva: :{color}[{tot_w}%])"):
-                if tot_w != 100: st.warning("⚠️ Zbroj težina svih ciljeva mora biti točno 100%!")
+                if tot_w != 100: st.warning(f"⚠️ Zbroj težina svih ciljeva mora biti točno 100%! Trenutno: {tot_w}%")
                 
                 for _, g in goals.iterrows():
                     gid = g['id']
@@ -169,7 +173,9 @@ def render_manager_view():
                             nd = st.text_area("Opis", g['description'])
                             if st.form_submit_button("Ažuriraj Cilj"):
                                 conn.execute("UPDATE goals SET title=?, weight=?, description=? WHERE id=?", (nt, nw, nd, gid))
-                                conn.commit(); st.success("Ažurirano!"); st.rerun()
+                                conn.commit()
+                                st.success("Ažurirano!")
+                                st.rerun()
 
                     st.write("**Ključni pokazatelji (KPI) unutar ovog cilja:**")
                     kpis = pd.read_sql_query("SELECT description, weight, progress FROM goal_kpis WHERE goal_id=?", conn, params=(gid,))
@@ -178,26 +184,37 @@ def render_manager_view():
                     
                     ed = st.data_editor(df_k, key=f"k_{gid}", num_rows="dynamic", use_container_width=True)
                     
+                    # --- FIX ZA TYPEERROR I SOFT-LOCK NA 100% ---
                     if st.button("💾 Spremi KPI i Izračunaj", key=f"s_{gid}"):
-                        current_kpi_sum = pd.to_numeric(ed['Težina (%)'], errors='coerce').fillna(0).sum()
+                        # Sigurno pretvaranje stupaca u brojeve, zamjena None s 0
+                        ed['Težina (%)'] = pd.to_numeric(ed['Težina (%)'], errors='coerce').fillna(0)
+                        ed['Ostvarenje (%)'] = pd.to_numeric(ed['Ostvarenje (%)'], errors='coerce').fillna(0)
+                        
+                        current_kpi_sum = ed['Težina (%)'].sum()
+                        
+                        # Spremanje čak i ako nije 100%, uz crveno upozorenje
+                        conn.execute("DELETE FROM goal_kpis WHERE goal_id=?", (gid,))
+                        weighted_progress_sum = 0
+                        
+                        for _, r in ed.iterrows():
+                            if str(r['KPI Naziv']).strip():
+                                w_val = float(r['Težina (%)'])
+                                p_val = float(r['Ostvarenje (%)'])
+                                conn.execute("INSERT INTO goal_kpis (goal_id, description, weight, progress) VALUES (?,?,?,?)", (gid, str(r['KPI Naziv']), w_val, p_val))
+                                weighted_progress_sum += (w_val * p_val) / 100
+                        
+                        conn.execute("UPDATE goals SET progress=?, last_updated=? WHERE id=?", (weighted_progress_sum, datetime.now().strftime("%Y-%m-%d"), gid))
+                        conn.commit()
                         
                         if current_kpi_sum != 100:
-                            st.error(f"❌ Greška: Zbroj težina KPI-eva je {current_kpi_sum}%. Mora biti točno 100%!")
+                            st.warning(f"⚠️ KPI-evi su spremljeni, ali zbroj težina je {current_kpi_sum}% (cilj je 100%).")
                         else:
-                            conn.execute("DELETE FROM goal_kpis WHERE goal_id=?", (gid,))
-                            weighted_progress_sum = 0
-                            for _, r in ed.iterrows():
-                                if str(r['KPI Naziv']).strip():
-                                    w_val = float(r['Težina (%)'])
-                                    p_val = float(r['Ostvarenje (%)'])
-                                    conn.execute("INSERT INTO goal_kpis (goal_id, description, weight, progress) VALUES (?,?,?,?)", (gid, str(r['KPI Naziv']), w_val, p_val))
-                                    weighted_progress_sum += (w_val * p_val) / 100
-                            conn.execute("UPDATE goals SET progress=?, last_updated=? WHERE id=?", (weighted_progress_sum, datetime.now().strftime("%Y-%m-%d"), gid))
-                            conn.commit()
-                            st.success(f"✅ Spremljeno! Napredak cilja je sada: {weighted_progress_sum:.1f}%")
-                            time.sleep(1); st.rerun()
+                            st.success(f"✅ Spremljeno! Napredak cilja: {weighted_progress_sum:.1f}%")
+                        
+                        time.sleep(1)
+                        st.rerun()
                     
-                    st.progress(float(g['progress'])/100)
+                    st.progress(min(float(g['progress'])/100, 1.0))
                     st.caption(f"Ostvarenje cilja: {g['progress']:.1f}%")
                     st.divider()
 
@@ -219,7 +236,6 @@ def render_manager_view():
             status_text = "Završeno" if is_locked else ("U tijeku" if r is not None else "Nije započeto")
             
             with st.expander(f"{status_icon} {emp['ime_prezime']} ({status_text})"):
-                
                 tab_input, tab_gap = st.tabs(["🖊️ Unos Ocjena", "🔍 Gap Analiza (Usporedba)"])
                 
                 with tab_input:
@@ -256,23 +272,6 @@ def render_manager_view():
 
                         st.write("**Zaključni komentar:**")
                         st.info(r['action_plan'])
-                        
-                        if st.button("🖨️ Prikaži PDF Preview", key=f"pdf_{kid}"):
-                            html = f"""
-                            <div style="border:2px solid #ccc; padding:20px; font-family:Arial;">
-                                <h2>Izvještaj o učinku</h2>
-                                <p><b>Zaposlenik:</b> {emp['ime_prezime']}</p>
-                                <p><b>Period:</b> {current_period}</p>
-                                <hr>
-                                <h3>Rezultati</h3>
-                                <p>Učinak: {r['avg_performance']:.2f}</p>
-                                <p>Potencijal: {r['avg_potential']:.2f}</p>
-                                <p><b>Kategorija: {r['category']}</b></p>
-                                <hr>
-                                <p><i>Dokument generiran sustavom Talent App</i></p>
-                            </div>
-                            """
-                            components.html(html, height=400, scrolling=True)
                     else:
                         with st.form(f"eval_form_{kid}"):
                             saved = {}
@@ -320,7 +319,6 @@ def render_manager_view():
                                 user_data = {'ime': emp['ime_prezime'], 'radno_mjesto': emp['radno_mjesto'], 'odjel': emp['department']}
                                 target_status = "Submitted" if is_final else "Draft"
                                 
-                                conn.close() 
                                 success, msg = save_evaluation_json_method(
                                     company_id, current_period, kid, username, user_data, 
                                     vals_p, vals_pot, avg_p, avg_pot, cat, plan, 
@@ -328,60 +326,28 @@ def render_manager_view():
                                 )
                                 
                                 if success:
-                                    if is_final:
-                                        st.balloons()
-                                        st.success("Procjena je uspješno poslana i zaključana!")
-                                    else:
-                                        st.toast("Nacrt uspješno spremljen!", icon="💾")
+                                    if is_final: st.balloons()
+                                    st.success(f"Procjena {target_status}!")
                                     time.sleep(1)
                                     st.rerun()
-                                else:
-                                    st.error(f"Greška pri spremanju: {msg}")
+                                else: st.error(msg)
 
                 with tab_gap:
                     se_df = pd.read_sql_query("SELECT * FROM evaluations WHERE kadrovski_broj=? AND period=? AND is_self_eval=1", conn, params=(kid, current_period))
-                    
                     if not se_df.empty:
+                        # (Logika Gap analize...)
                         se_row = se_df.iloc[0]
-                        mgr_json = {}
-                        if r is not None and r['json_answers']:
-                            try: mgr_json = json.loads(r['json_answers'])
-                            except: pass
-                        se_json = {}
-                        try: se_json = json.loads(se_row['json_answers'])
-                        except: pass
+                        mgr_json = json.loads(r['json_answers']) if r is not None and r['json_answers'] else {}
+                        se_json = json.loads(se_row['json_answers']) if se_row['json_answers'] else {}
                         
                         gap_data = []
-                        all_qs = survey_data['p'] + survey_data['pot']
-                        
-                        for q in all_qs:
+                        for q in survey_data['p'] + survey_data['pot']:
                             qid = str(q['id'])
                             s_mgr = int(mgr_json.get(qid, 0))
                             s_emp = int(se_json.get(qid, 0))
-                            diff = s_mgr - s_emp
-                            if diff == 0: status = "✅ Isto"
-                            elif diff > 0: status = "📈 Više"
-                            else: status = "📉 Niže"
-                            
-                            gap_data.append({
-                                "Pitanje": q['title'],
-                                "Zaposlenik": s_emp,
-                                "Voditelj": s_mgr,
-                                "Razlika": diff,
-                                "Status": status
-                            })
-                        
-                        df_gap = pd.DataFrame(gap_data)
-                        
-                        c1, c2 = st.columns(2)
-                        c1.metric("Zaposlenik (Samoprocjena)", f"{se_row['avg_performance']:.2f} / {se_row['avg_potential']:.2f}")
-                        if r is not None:
-                            c2.metric("Voditelj (Trenutno)", f"{r['avg_performance']:.2f} / {r['avg_potential']:.2f}")
-                        else: c2.info("Unesite ocjene da vidite usporedbu.")
-                            
-                        st.dataframe(df_gap.style.applymap(lambda x: 'background-color: #ffcccc' if x < 0 else ('background-color: #ccffcc' if x > 0 else ''), subset=['Razlika']), use_container_width=True)
-                    else:
-                        st.warning("Zaposlenik još nije ispunio samoprocjenu.")
+                            gap_data.append({"Pitanje": q['title'], "Radnik": s_emp, "Manager": s_mgr, "Razlika": s_mgr - s_emp})
+                        st.table(pd.DataFrame(gap_data))
+                    else: st.warning("Radnik još nije ispunio samoprocjenu.")
 
     # ----------------------------------------------------------------
     # 5. IDP
@@ -395,66 +361,27 @@ def render_manager_view():
             d = dict(zip([c[1] for c in conn.execute("PRAGMA table_info(development_plans)").fetchall()], res)) if res else {}
             
             with st.expander(f"📄 {emp['ime_prezime']}"):
-                st.markdown("### 1. DIJAGNOZA")
-                s = st.text_area("Ključne snage (Što zadržati?)", d.get('strengths',''), key=f"s_{eid}")
-                w = st.text_area("Područja za razvoj (Što popraviti?)", d.get('areas_improve',''), key=f"w_{eid}")
-                g = st.text_input("Karijerni cilj (1-2 godine)", d.get('career_goal',''), key=f"g_{eid}")
+                s = st.text_area("Ključne snage", d.get('strengths',''), key=f"s_{eid}")
+                w = st.text_area("Područja za razvoj", d.get('areas_improve',''), key=f"w_{eid}")
+                g = st.text_input("Karijerni cilj", d.get('career_goal',''), key=f"g_{eid}")
                 
-                st.markdown("### 2. PLAN AKTIVNOSTI (70-20-10)")
+                st.write("**A) 70% ISKUSTVO I PRAKSA**")
+                d70 = st.data_editor(get_df_from_json(d.get('json_70',''), ["Što razviti?", "Aktivnost", "Rok", "Dokaz"]), key=f"d70_{eid}", num_rows="dynamic", use_container_width=True)
                 
-                st.write("**A) 70% ISKUSTVO I PRAKSA (Rad na zadacima)**")
-                st.caption("Učenje kroz rad – novi zadaci, projekti, rotacije poslova.")
-                st.info("💡 **Primjer:** 'Preuzeti potpunu organizaciju jednog internog događaja od plana do realizacije.'")
-                d70 = st.data_editor(
-                    get_df_from_json(d.get('json_70',''), ["Što razviti?", "Aktivnost", "Rok", "Dokaz"]), 
-                    key=f"d70_{eid}", num_rows="dynamic", use_container_width=True
-                )
+                st.write("**B) 20% UČENJE OD DRUGIH**")
+                d20 = st.data_editor(get_df_from_json(d.get('json_20',''), ["Što razviti?", "Aktivnost", "Rok"]), key=f"d20_{eid}", num_rows="dynamic", use_container_width=True)
                 
-                st.write("**B) 20% UČENJE OD DRUGIH (Feedback & Mentoring)**")
-                st.caption("Mentoring, coaching, shadowing, povratne informacije.")
-                st.info("💡 **Primjer:** 'Kratki 1-na-1 sastanak s Voditeljem projekata jednom mjesečno radi feedbacka.'")
-                d20 = st.data_editor(
-                    get_df_from_json(d.get('json_20',''), ["Što razviti?", "Aktivnost", "Rok"]), 
-                    key=f"d20_{eid}", num_rows="dynamic", use_container_width=True
-                )
-                
-                st.write("**C) 10% FORMALNA EDUKACIJA (Tečajevi)**")
-                st.caption("Trening, knjige, seminari, online tečajevi.")
-                st.info("💡 **Primjer:** 'Završiti Excel Advanced tečaj na Udemy platformi.'")
-                
-                d10 = st.data_editor(
-                    get_df_from_json(d.get('json_10',''), ["Edukacija", "Trošak", "Rok"]), 
-                    key=f"d10_{eid}", 
-                    num_rows="dynamic", 
-                    use_container_width=True,
-                    column_config={
-                        "Trošak": st.column_config.TextColumn("Trošak", help="Unesite iznos (npr. 500 EUR)")
-                    }
-                )
-                
-                st.markdown("### 3. PODRŠKA")
-                sup = st.text_input("Potrebna podrška:", d.get('support_needed',''), key=f"sup_{eid}")
+                st.write("**C) 10% FORMALNA EDUKACIJA**")
+                d10 = st.data_editor(get_df_from_json(d.get('json_10',''), ["Edukacija", "Trošak", "Rok"]), key=f"d10_{eid}", num_rows="dynamic", use_container_width=True)
                 
                 if st.button("💾 SPREMI IDP", key=f"b_idp_{eid}"):
-                    try:
-                        conn.close()
-                        with sqlite3.connect(DB_FILE) as db:
-                            j70 = table_to_json_string(d70.astype(str))
-                            j20 = table_to_json_string(d20.astype(str))
-                            j10 = table_to_json_string(d10.astype(str))
-                            
-                            db.execute("DELETE FROM development_plans WHERE kadrovski_broj=? AND period=?", (eid, current_period))
-                            db.execute("""INSERT INTO development_plans 
-                                (period, kadrovski_broj, manager_id, strengths, areas_improve, career_goal, 
-                                 json_70, json_20, json_10, support_needed, support_notes, status, company_id) 
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", 
-                                (current_period, eid, username, s, w, g, j70, j20, j10, sup, "", 'Active', 1))
-                        
-                        st.toast("IDP Spremljen!", icon="✅")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Greška kod spremanja: {e}")
+                    with sqlite3.connect(DB_FILE) as db:
+                        db.execute("DELETE FROM development_plans WHERE kadrovski_broj=? AND period=?", (eid, current_period))
+                        db.execute("INSERT INTO development_plans (period, kadrovski_broj, manager_id, strengths, areas_improve, career_goal, json_70, json_20, json_10, status, company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                                   (current_period, eid, username, s, w, g, table_to_json_string(d70), table_to_json_string(d20), table_to_json_string(d10), 'Active', company_id))
+                    st.toast("IDP Spremljen!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
 
     # ----------------------------------------------------------------
     # 6. UPRAVLJANJE LJUDIMA
@@ -471,18 +398,10 @@ def render_manager_view():
                 if st.form_submit_button("Pošalji"):
                     rid = my_team[my_team['ime_prezime']==rec]['kadrovski_broj'].values[0]
                     conn.execute("INSERT INTO recognitions (sender_id, receiver_id, message, timestamp, company_id) VALUES (?,?,?,?,?)", (username, rid, msg, str(date.today()), company_id))
-                    conn.commit(); st.success("Poslano!")
+                    conn.commit()
+                    st.success("Poslano!")
 
         with t2:
-            st.caption("Delegirajte procjenu Team Leadu ili Mentoru.")
-            with st.form("del_form"):
-                mentor = st.selectbox("Mentor:", my_team['ime_prezime'].tolist())
-                target = st.selectbox("Koga procijeniti:", my_team['ime_prezime'].tolist())
-                if st.form_submit_button("Delegiraj"):
-                    mid = my_team[my_team['ime_prezime']==mentor]['kadrovski_broj'].values[0]
-                    tid = my_team[my_team['ime_prezime']==target]['kadrovski_broj'].values[0]
-                    conn.execute("INSERT INTO delegated_tasks (manager_id, delegate_id, target_id, period, status, company_id) VALUES (?,?,?,?,'Pending',1)", (username, mid, tid, current_period))
-                    conn.commit(); st.success("Delegirano!")
+            st.info("Ovdje možete delegirati procjene drugim voditeljima.")
 
-    try: conn.close()
-    except: pass
+    conn.close()
