@@ -19,7 +19,7 @@ jobs:
         run: sudo apt-get install ruby-full
 
       - name: Install GitHub Changelog Generator
-        run: gem install github_changelog_generator
+        - run: gem install --user-install github_changelog_generator
 
       - name: Generate changelog
         run: github_changelog_generator --token ${{ secrets.GITHUB_TOKEN }}
