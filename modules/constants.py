@@ -18,8 +18,9 @@ STATUS_SUBMITTED = "Submitted"
 STATUS_APPROVED = "Approved"
 STATUS_ARCHIVED = "Archived"
 
-# Default Lozinka
-DEFAULT_PASSWORD = "lozinka123"
+# Default Lozinka (override env varijablom: TALENT_DEFAULT_PASSWORD)
+import os
+DEFAULT_PASSWORD = os.environ.get("TALENT_DEFAULT_PASSWORD", "lozinka123")
 
-# --- OVO JE ONAJ KLJUČNI DIO ---
-SECRET_SALT = "SaaS_Secure_Performance_2026"
+# Kriptografski salt (override env varijablom: TALENT_SECRET_SALT)
+SECRET_SALT = os.environ.get("TALENT_SECRET_SALT", "SaaS_Secure_Performance_2026")

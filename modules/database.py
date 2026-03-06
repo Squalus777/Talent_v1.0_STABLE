@@ -38,7 +38,34 @@ def init_db():
     
     # 2. Evaluacije i Ciljevi
     c.execute('CREATE TABLE IF NOT EXISTS evaluations (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT, kadrovski_broj TEXT, ime_prezime TEXT, radno_mjesto TEXT, department TEXT, manager_id TEXT, avg_performance REAL, avg_potential REAL, category TEXT, action_plan TEXT, status TEXT, feedback_date TEXT, company_id INTEGER, is_self_eval INTEGER DEFAULT 0, json_answers TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT, kadrovski_broj TEXT, manager_id TEXT, title TEXT, description TEXT, weight INTEGER, progress REAL, status TEXT, last_updated TEXT, deadline TEXT, company_id INTEGER)')
+    c.execute('''CREATE TABLE IF NOT EXISTS goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period TEXT,
+        kadrovski_broj TEXT,
+        manager_id TEXT,
+        title TEXT,
+        description TEXT,
+        weight INTEGER,
+        progress REAL,
+        status TEXT,
+        last_updated TEXT,
+        deadline TEXT,
+        company_id INTEGER,
+        parent_goal_id INTEGER DEFAULT NULL,
+        level TEXT DEFAULT 'employee',
+        department TEXT DEFAULT NULL
+    )''')
+    
+    # Migracija postojeće tablice ako već postoji bez novih stupaca
+    try:
+        c.execute("ALTER TABLE goals ADD COLUMN parent_goal_id INTEGER DEFAULT NULL")
+    except: pass
+    try:
+        c.execute("ALTER TABLE goals ADD COLUMN level TEXT DEFAULT 'employee'")
+    except: pass
+    try:
+        c.execute("ALTER TABLE goals ADD COLUMN department TEXT DEFAULT NULL")
+    except: pass
     c.execute('CREATE TABLE IF NOT EXISTS goal_kpis (id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id INTEGER, description TEXT, weight INTEGER, progress REAL, deadline TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS development_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT, kadrovski_broj TEXT, manager_id TEXT, strengths TEXT, areas_improve TEXT, career_goal TEXT, json_70 TEXT, json_20 TEXT, json_10 TEXT, support_needed TEXT, support_notes TEXT, status TEXT, company_id INTEGER)')
     

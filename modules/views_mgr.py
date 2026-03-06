@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import io
 import plotly.express as px
 import plotly.graph_objects as go
 import sqlite3
@@ -14,8 +15,8 @@ from modules.utils import (
     table_to_json_string, get_df_from_json, get_active_survey_questions,
     safe_load_json, normalize_progress, create_9box_grid
 )
-# 1. IMPORT KONSTANTI ZA LIMITE
 from modules.constants import MAX_TITLE_LENGTH, MAX_TEXT_LENGTH
+from modules.goals_cascade import render_team_goals_manager
 
 def render_manager_view():
     conn = get_connection()
@@ -117,104 +118,7 @@ def render_manager_view():
     # 3. CILJEVI TIMA
     # ----------------------------------------------------------------
     elif menu == "🎯 Ciljevi Tima":
-        st.header("🎯 Ciljevi Tima")
-        my_team = pd.read_sql_query("SELECT * FROM employees_master WHERE manager_id=?", conn, params=(username,))
-        
-        with st.expander("➕ Dodaj Novi Cilj", expanded=False):
-            with st.form("new_goal"):
-                emp = st.selectbox("Zaposlenik:", my_team['ime_prezime'].tolist())
-                # FIX: Dodan max_chars
-                tit = st.text_input("Naziv cilja", max_chars=MAX_TITLE_LENGTH)
-                wei = st.number_input("Težina cilja (%)", 1, 100, 25, help="Koliko ovaj cilj nosi u ukupnoj ocjeni zaposlenika?")
-                desc = st.text_area("Opis / KPI", max_chars=MAX_TEXT_LENGTH)
-                dline = st.date_input("Rok")
-                if st.form_submit_button("Kreiraj"):
-                    kid = my_team[my_team['ime_prezime']==emp]['kadrovski_broj'].values[0]
-                    conn.execute("INSERT INTO goals (period, kadrovski_broj, manager_id, title, description, weight, progress, status, last_updated, deadline, company_id) VALUES (?,?,?,?,?,?,0,'On Track',?,?,?)",
-                               (current_period, kid, username, tit, desc, wei, datetime.now().strftime("%Y-%m-%d"), str(dline), company_id))
-                    conn.commit()
-                    st.success("Dodano!")
-                    st.rerun()
-
-        for _, emp in my_team.iterrows():
-            eid = emp['kadrovski_broj']
-            goals = pd.read_sql_query("SELECT * FROM goals WHERE kadrovski_broj=? AND period=?", conn, params=(eid, current_period))
-            tot_w = goals['weight'].sum() if not goals.empty else 0
-            
-            color = "green" if tot_w == 100 else "red"
-            with st.expander(f"👤 {emp['ime_prezime']} (Ukupna težina ciljeva: :{color}[{tot_w}%])"):
-                if tot_w != 100: st.warning(f"⚠️ Zbroj težina svih ciljeva mora biti točno 100%! Trenutno: {tot_w}%")
-                
-                for _, g in goals.iterrows():
-                    gid = g['id']
-                    
-                    c_title, c_act = st.columns([4, 1])
-                    c_title.markdown(f"### 🎯 {g['title']} ({g['weight']}%)")
-                    
-                    if c_act.button("🗑️ Briši", key=f"pre_del_{gid}"):
-                        st.session_state[f"confirm_del_{gid}"] = True
-                    
-                    if st.session_state.get(f"confirm_del_{gid}"):
-                        st.error("Jeste li sigurni? Ovo briše cilj i sve njegove KPI-eve.")
-                        col_yes, col_no = st.columns(2)
-                        if col_yes.button("DA, Obriši", key=f"yes_del_{gid}"):
-                            conn.execute("DELETE FROM goals WHERE id=?", (gid,))
-                            conn.execute("DELETE FROM goal_kpis WHERE goal_id=?", (gid,))
-                            conn.commit()
-                            st.rerun()
-                        if col_no.button("Odustani", key=f"no_del_{gid}"):
-                            st.session_state[f"confirm_del_{gid}"] = False
-                            st.rerun()
-
-                    with st.expander("✏️ Uredi detalje cilja"):
-                        with st.form(f"edit_goal_{gid}"):
-                            # FIX: Dodan max_chars
-                            nt = st.text_input("Naziv", g['title'], max_chars=MAX_TITLE_LENGTH)
-                            nw = st.number_input("Težina (%)", 1, 100, g['weight'])
-                            nd = st.text_area("Opis", g['description'], max_chars=MAX_TEXT_LENGTH)
-                            if st.form_submit_button("Ažuriraj Cilj"):
-                                conn.execute("UPDATE goals SET title=?, weight=?, description=? WHERE id=?", (nt, nw, nd, gid))
-                                conn.commit()
-                                st.success("Ažurirano!")
-                                st.rerun()
-
-                    st.write("**Ključni pokazatelji (KPI) unutar ovog cilja:**")
-                    kpis = pd.read_sql_query("SELECT description, weight, progress FROM goal_kpis WHERE goal_id=?", conn, params=(gid,))
-                    
-                    df_k = kpis.rename(columns={'description':'KPI Naziv','weight':'Težina (%)','progress':'Ostvarenje (%)'}) if not kpis.empty else pd.DataFrame(columns=['KPI Naziv','Težina (%)','Ostvarenje (%)'])
-                    
-                    ed = st.data_editor(df_k, key=f"k_{gid}", num_rows="dynamic", use_container_width=True)
-                    
-                    if st.button("💾 Spremi KPI i Izračunaj", key=f"s_{gid}"):
-                        ed['Težina (%)'] = pd.to_numeric(ed['Težina (%)'], errors='coerce').fillna(0)
-                        ed['Ostvarenje (%)'] = pd.to_numeric(ed['Ostvarenje (%)'], errors='coerce').fillna(0)
-                        
-                        current_kpi_sum = ed['Težina (%)'].sum()
-                        
-                        conn.execute("DELETE FROM goal_kpis WHERE goal_id=?", (gid,))
-                        weighted_progress_sum = 0
-                        
-                        for _, r in ed.iterrows():
-                            if str(r['KPI Naziv']).strip():
-                                w_val = float(r['Težina (%)'])
-                                p_val = float(r['Ostvarenje (%)'])
-                                conn.execute("INSERT INTO goal_kpis (goal_id, description, weight, progress) VALUES (?,?,?,?)", (gid, str(r['KPI Naziv']), w_val, p_val))
-                                weighted_progress_sum += (w_val * p_val) / 100
-                        
-                        conn.execute("UPDATE goals SET progress=?, last_updated=? WHERE id=?", (weighted_progress_sum, datetime.now().strftime("%Y-%m-%d"), gid))
-                        conn.commit()
-                        
-                        if current_kpi_sum != 100:
-                            st.warning(f"⚠️ KPI-evi su spremljeni, ali zbroj težina je {current_kpi_sum}% (cilj je 100%).")
-                        else:
-                            st.success(f"✅ Spremljeno! Napredak cilja: {weighted_progress_sum:.1f}%")
-                        
-                        time.sleep(1)
-                        st.rerun()
-                    
-                    st.progress(normalize_progress(g['progress']))
-                    st.caption(f"Ostvarenje cilja: {g['progress']:.1f}%")
-                    st.divider()
+        render_team_goals_manager(username, company_id, current_period)
 
     # ----------------------------------------------------------------
     # 4. UNOS PROCJENA

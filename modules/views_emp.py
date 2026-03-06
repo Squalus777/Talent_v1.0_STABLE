@@ -10,6 +10,7 @@ from modules.utils import (
     calculate_category, render_metric_input, get_df_from_json, 
     get_active_survey_questions, safe_load_json, normalize_progress
 )
+from modules.goals_cascade import render_goals_employee_context
 
 def render_employee_view():
     conn = get_connection()
@@ -146,22 +147,11 @@ def render_employee_view():
                 st.info("Prvo morate ispuniti svoju samoprocjenu.")
 
     # ----------------------------------------------------------------
-    # 3. CILJEVI (SAFE PROGRESS)
+    # 3. CILJEVI (CASCADE PRIKAZ)
     # ----------------------------------------------------------------
     with t3:
         st.subheader("Moji Ciljevi")
-        goals = pd.read_sql_query("SELECT * FROM goals WHERE kadrovski_broj=? AND period=?", conn, params=(username, current_period))
-        if not goals.empty:
-            for _, g in goals.iterrows():
-                st.markdown(f"**{g['title']}** ({g['progress']}%)")
-                # FIX: normalize_progress
-                st.progress(normalize_progress(g['progress']))
-                st.caption(g['description'])
-                
-                kpis = pd.read_sql_query("SELECT description, weight, progress FROM goal_kpis WHERE goal_id=?", conn, params=(g['id'],))
-                if not kpis.empty:
-                    st.dataframe(kpis.rename(columns={'description':'KPI', 'weight':'Težina', 'progress':'%'}), hide_index=True)
-        else: st.info("Nemate dodijeljenih ciljeva.")
+        render_goals_employee_context(username, company_id, current_period)
 
     # ----------------------------------------------------------------
     # 4. IDP (SAFE JSON)

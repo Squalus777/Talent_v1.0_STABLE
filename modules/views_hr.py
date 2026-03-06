@@ -12,6 +12,7 @@ from modules.database import get_connection, get_active_period_info, DB_FILE, ge
 from modules.utils import get_df_from_json, make_hashes, create_9box_grid, safe_load_json
 # 2. IMPORT KONSTANTI ZA LIMITE
 from modules.constants import MAX_TITLE_LENGTH, MAX_TEXT_LENGTH
+from modules.goals_cascade import render_org_goals_hr
 
 def clean_excel_id(value):
     """Pomoćna funkcija za čišćenje ID-eva iz Excela."""
@@ -130,7 +131,10 @@ def render_hr_view():
     # 3. CILJEVI (Ažurirano s detaljnim KPI prikazom)
     # ----------------------------------------------------------------
     elif menu == "🎯 Upravljanje Ciljevima":
-        st.header("🎯 Pregled ciljeva po organizaciji")
+        render_org_goals_hr(company_id, current_period)
+
+        st.divider()
+        st.markdown("#### 👥 Pregled ciljeva zaposlenika po odjelu")
         sel_dept_g = st.selectbox("Odjel:", dept_list, key="goals_dept")
         filtered_master = df_master[df_master['department'] == sel_dept_g] if sel_dept_g != "Svi" else df_master
 

@@ -121,7 +121,7 @@ def render_admin_view():
         if st.button("Osvježi logove"):
             conn = get_connection()
             try:
-                logs = pd.read_sql_query("SELECT * FROM action_logs ORDER BY timestamp DESC LIMIT 100", conn)
+                logs = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 100", conn)
                 st.dataframe(logs, use_container_width=True)
             except Exception as e:
                 st.warning("Tablica 'action_logs' možda još nije kreirana ili je prazna.")
